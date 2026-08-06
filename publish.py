@@ -9,6 +9,14 @@ The vault file lives on one laptop and cannot be read from CI. Typefully already
 knows what is scheduled and what text will actually go out, so this asks it
 directly. That also means the story and the post can never show different words.
 
+ONE STORY PER DAY, AND NEVER A THREAD.
+The Typefully queue has five slots a weekday, so a busy day could otherwise turn
+into five story cards. It takes the EARLIEST post of the day and stops there.
+Threads are skipped rather than rendered, because the card only has room for one
+tweet and a thread would post as its opening line with the rest silently missing.
+If the earliest post is a thread it moves to the next one instead of losing the
+day entirely.
+
 IDEMPOTENCY: published draft ids are appended to state/published.json and
 committed back by the workflow. A rerun on the same day is a no-op. This matters
 more here than locally, because Actions can retry a job.
@@ -91,10 +99,25 @@ def todays_drafts(today):
     return out
 
 
-def draft_text(draft_id):
+def draft_posts(draft_id):
+    """All X posts on the draft. Length > 1 means it is a thread."""
     d = tf("/drafts/%s" % draft_id)
-    posts = (d.get("platforms", {}).get("x") or {}).get("posts") or []
-    return posts[0].get("text") if posts else None
+    return (d.get("platforms", {}).get("x") or {}).get("posts") or []
+
+
+def pick_one(drafts):
+    """Earliest single-tweet post of the day. Threads are skipped, not rendered."""
+    for d in sorted(drafts, key=lambda r: r["scheduled_date"]):
+        posts = draft_posts(d["id"])
+        if not posts:
+            print("skip %s: no X text" % d["id"])
+            continue
+        if len(posts) > 1:
+            print("skip %s: thread (%d tweets), a card only holds one"
+                  % (d["id"], len(posts)))
+            continue
+        return d, posts[0].get("text")
+    return None, None
 
 
 def render(text, key):
@@ -157,18 +180,29 @@ def main():
             sys.exit("missing required secret: " + name)
 
     done = json.load(open(STATE)) if os.path.exists(STATE) else []
-    drafts = [d for d in todays_drafts(today) if str(d["id"]) not in map(str, done)]
-    if not drafts:
-        print("nothing to post for %s" % today)
+    done_str = set(map(str, done))
+
+    all_today = todays_drafts(today)          # paginates; do it once
+    if not all_today:
+        print("nothing scheduled for %s" % today)
         return
+    if any(str(d["id"]) in done_str for d in all_today):
+        print("a story already went out today, one per day is the cap")
+        return
+    drafts = [d for d in all_today if str(d["id"]) not in done_str]
+
+    d, text = pick_one(drafts)
+    if not d:
+        print("no single-tweet post today (%d candidate(s) were threads or empty)"
+              % len(drafts))
+        return
+    if len(drafts) > 1:
+        print("%d posts scheduled today, taking the earliest only" % len(drafts))
 
     failed = 0
-    for d in drafts:
+    for _ in [d]:
         did, title = d["id"], (d.get("draft_title") or str(d["id"]))[:60]
         try:
-            text = draft_text(did)
-            if not text:
-                raise RuntimeError("draft has no X text")
             key = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:40] + "-" + today
             png = render(text, key)
             print("rendered %s (%d bytes)" % (os.path.basename(png), os.path.getsize(png)))
