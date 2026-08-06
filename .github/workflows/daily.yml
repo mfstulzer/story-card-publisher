@@ -1,0 +1,61 @@
+name: Daily Instagram story
+
+on:
+  schedule:
+    # 14:10 UTC. Deliberately chosen so it lands AFTER the 08:00 America/Winnipeg
+    # Typefully slot in BOTH halves of the year: 09:10 local in summer (CDT),
+    # 08:10 local in winter (CST). GitHub cron has no DST awareness, and 13:10
+    # would fire at 07:10 local in winter, publishing the story before the post.
+    - cron: "10 14 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Render only, do not publish"
+        type: boolean
+        default: true
+      date:
+        description: "Override date (YYYY-MM-DD)"
+        type: string
+        required: false
+
+permissions:
+  contents: write   # commit the rendered card + published-state back
+
+jobs:
+  story:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fonts
+        # Liberation Sans is the closest metric match to Helvetica in Debian.
+        # Noto Color Emoji replaces Apple Color Emoji. The card will differ
+        # slightly from a local render; that is expected and was accepted.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-liberation fonts-noto-color-emoji
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet pillow
+
+      - name: Publish story
+        env:
+          TYPEFULLY_API_KEY: ${{ secrets.TYPEFULLY_API_KEY }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          python publish.py \
+            ${{ (inputs.dry_run == true || inputs.dry_run == 'true') && '--dry-run' || '' }} \
+            ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
+
+      - name: Upload rendered card for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-card
+          path: cards/*.png
+          if-no-files-found: ignore
