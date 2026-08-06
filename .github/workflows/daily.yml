@@ -24,6 +24,10 @@ permissions:
 jobs:
   story:
     runs-on: ubuntu-latest
+    # Runners are UTC. Without this the card stamps UTC time, so a story posted
+    # at 09:10 local would read "2:10 PM" next to a post that went out at 08:00.
+    env:
+      TZ: America/Winnipeg
     steps:
       - uses: actions/checkout@v4
 
