@@ -2,11 +2,25 @@ name: Daily Instagram story
 
 on:
   schedule:
-    # 14:10 UTC. Deliberately chosen so it lands AFTER the 08:00 America/Winnipeg
-    # Typefully slot in BOTH halves of the year: 09:10 local in summer (CDT),
-    # 08:10 local in winter (CST). GitHub cron has no DST awareness, and 13:10
-    # would fire at 07:10 local in winter, publishing the story before the post.
-    - cron: "10 14 * * *"
+    # One run per expected post, each timed to land AFTER its Typefully slot in
+    # BOTH halves of the year. GitHub cron has no DST awareness, so every value
+    # is picked against the WINTER offset (CST, UTC-6), the tighter of the two;
+    # in summer (CDT, UTC-5) each simply fires an hour later in local terms.
+    # Rule: a post at local T needs cron hour >= T+6.
+    #
+    # Mon-Fri, posts at 08:00 and 11:00 local:
+    - cron: "10 14 * * 1-5"   # 09:10 CDT / 08:10 CST  -> cards the 08:00 post
+    - cron: "10 17 * * 1-5"   # 12:10 CDT / 11:10 CST  -> cards the 11:00 post
+    # Sunday, posts at 10:00 and 13:00 local (Sunday slots opened 2026-08-10 and
+    # are deliberately later than weekdays, so they need their own crons; the old
+    # single 14:10 rule fired 09:10 CDT, i.e. BEFORE the 10:00 Sunday post):
+    - cron: "10 16 * * 0"     # 11:10 CDT / 10:10 CST  -> cards the 10:00 post
+    - cron: "10 19 * * 0"     # 14:10 CDT / 13:10 CST  -> cards the 13:00 post
+    # Saturday has no queue slots configured, so it gets no cron.
+    #
+    # A late runner is harmless (cron never fires EARLY, and the publisher takes
+    # the earliest post not yet carded, so runs landing out of order still card
+    # one post each). MAX_PER_DAY in publish.py is the backstop.
   workflow_dispatch:
     inputs:
       dry_run:

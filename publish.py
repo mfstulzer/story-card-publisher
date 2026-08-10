@@ -9,13 +9,18 @@ The vault file lives on one laptop and cannot be read from CI. Typefully already
 knows what is scheduled and what text will actually go out, so this asks it
 directly. That also means the story and the post can never show different words.
 
-ONE STORY PER DAY, AND NEVER A THREAD.
+CAPPED AT MAX_PER_DAY STORIES, AND NEVER A THREAD.
 The Typefully queue has five slots a weekday, so a busy day could otherwise turn
-into five story cards. It takes the EARLIEST post of the day and stops there.
+into five story cards. Each run takes the EARLIEST post that has not been carded
+yet and stops there, so the cap is enforced across runs, not within one.
 Threads are skipped rather than rendered, because the card only has room for one
 tweet and a thread would post as its opening line with the rest silently missing.
 If the earliest post is a thread it moves to the next one instead of losing the
 day entirely.
+
+Raised 1 -> 2 on 2026-08-10, when the vault queue went to two posts a day. At 1
+the second post of every day silently got no card. The workflow fires once per
+expected post (see daily.yml); this cap is the backstop, not the schedule.
 
 IDEMPOTENCY: published draft ids are appended to state/published.json and
 committed back by the workflow. A rerun on the same day is a no-op. This matters
@@ -33,6 +38,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Winnipeg")
+MAX_PER_DAY = 2     # story cards per day; keep in step with the vault queue
 TF_API = "https://api.typefully.com/v2/social-sets/324966"
 IG_API = "https://graph.instagram.com/v21.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -186,8 +192,9 @@ def main():
     if not all_today:
         print("nothing scheduled for %s" % today)
         return
-    if any(str(d["id"]) in done_str for d in all_today):
-        print("a story already went out today, one per day is the cap")
+    already = sum(1 for d in all_today if str(d["id"]) in done_str)
+    if already >= MAX_PER_DAY:
+        print("%d card(s) already went out today, cap is %d" % (already, MAX_PER_DAY))
         return
     drafts = [d for d in all_today if str(d["id"]) not in done_str]
 
@@ -197,7 +204,8 @@ def main():
               % len(drafts))
         return
     if len(drafts) > 1:
-        print("%d posts scheduled today, taking the earliest only" % len(drafts))
+        print("%d uncarded post(s) today, taking the earliest; %d of %d cards used"
+              % (len(drafts), already + 1, MAX_PER_DAY))
 
     failed = 0
     for _ in [d]:
