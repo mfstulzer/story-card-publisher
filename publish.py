@@ -23,8 +23,12 @@ the second post of every day silently got no card. The workflow fires once per
 expected post (see daily.yml); this cap is the backstop, not the schedule.
 
 IDEMPOTENCY: published draft ids are appended to state/published.json and
-committed back by the workflow. A rerun on the same day is a no-op. This matters
-more here than locally, because Actions can retry a job.
+committed back at the END of the run, in a SECOND commit. The first commit (mid
+loop) exists only to get the card image into the repo so jsDelivr can serve it
+to Instagram, and necessarily predates the publish, so it cannot carry the id.
+A rerun on the same day is then a no-op. This matters more here than locally,
+because Actions can retry a job -- and since 2026-08-10 there are two scheduled
+runs a day, which without a persisted id would card the same post twice.
 
 TOKEN: passed in as a secret. This job deliberately does NOT refresh it, because
 Actions cannot update its own secrets without a PAT, so a refresh here would
@@ -236,6 +240,20 @@ def main():
     if not DRY:
         os.makedirs(os.path.dirname(STATE), exist_ok=True)
         json.dump(done, open(STATE, "w"), indent=1)
+        # COMMIT AGAIN, deliberately. The commit inside the loop happens BEFORE
+        # publish() because jsDelivr can only serve the card once it is in the
+        # repo, so that commit cannot possibly carry the published id -- it is
+        # not known until the story actually lands. Writing the state after it
+        # and never committing is why published.json sat at [] from 8-05 to
+        # 8-10: every card was committed, no id ever was. Harmless while there
+        # was one run a day; with two it would card the SAME post twice.
+        subprocess.run(["git", "add", STATE], cwd=HERE, check=False)
+        subprocess.run(["git", "-c", "user.name=story-bot",
+                        "-c", "user.email=bot@users.noreply.github.com",
+                        "commit", "-q", "-m",
+                        "state: %d card(s) recorded through %s" % (len(done), today)],
+                       cwd=HERE, check=False)
+        subprocess.run(["git", "push", "-q"], cwd=HERE, check=False)
     sys.exit(1 if failed else 0)
 
 
